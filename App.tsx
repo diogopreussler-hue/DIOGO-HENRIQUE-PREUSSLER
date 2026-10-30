@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { 
   LayoutDashboard, PlusCircle, Trash2, FileSpreadsheet, 
   Building2, CalendarDays, ShoppingBag, 
-  Printer, Target, ExternalLink, Sun, TrendingUp, Cloud, Link as LinkIcon
+  Printer, Target, ExternalLink, Sun, TrendingUp, Cloud, Link as LinkIcon, Bell, AlertTriangle
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, Cell
@@ -105,6 +105,42 @@ const App: React.FC = () => {
 
   const formatCurrency = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
 
+  // PARCELAS VENCIDAS: não pagas com vencimento (ou data do lançamento) anterior a hoje
+  const [showNotifications, setShowNotifications] = useState(false);
+  const todayStr = new Date().toLocaleDateString('en-CA');
+  const overdueExpenses = useMemo(() => expenses
+    .filter(e => e.status === PaymentStatus.PENDING && (e.dueDate || e.date) < todayStr)
+    .map(e => {
+      const due = e.dueDate || e.date;
+      const days = Math.floor((new Date(todayStr).getTime() - new Date(due).getTime()) / 86400000);
+      return { ...e, due, days };
+    })
+    .sort((a, b) => b.days - a.days), [expenses, todayStr]);
+  const overdueTotal = overdueExpenses.reduce((sum, e) => sum + e.negotiatedValue, 0);
+  const formatDate = (d: string) => d.split('-').reverse().join('/');
+
+  // LEMBRETE DO NAVEGADOR: uma vez por dia por obra, se a permissão foi concedida
+  useEffect(() => {
+    if (!('Notification' in window) || Notification.permission !== 'granted' || overdueExpenses.length === 0) return;
+    const key = `pre_notif_${activeProjectKey}`;
+    if (localStorage.getItem(key) === todayStr) return;
+    new Notification(`Parcelas vencidas • ${activeProjectKey}`, {
+      body: `${overdueExpenses.length} parcela(s) em atraso, total de ${formatCurrency(overdueTotal)}.`,
+    });
+    localStorage.setItem(key, todayStr);
+  }, [overdueExpenses.length, activeProjectKey]);
+
+  const enableBrowserNotifications = async () => {
+    if (!('Notification' in window)) return alert('Este navegador não suporta notificações.');
+    const result = await Notification.requestPermission();
+    if (result === 'granted' && overdueExpenses.length > 0) {
+      new Notification(`Parcelas vencidas • ${activeProjectKey}`, {
+        body: `${overdueExpenses.length} parcela(s) em atraso, total de ${formatCurrency(overdueTotal)}.`,
+      });
+      localStorage.setItem(`pre_notif_${activeProjectKey}`, todayStr);
+    }
+  };
+
   const updateExpense = (id: string, field: keyof Expense, value: any) => {
     setExpenses(prev => prev.map(e => {
       if (e.id === id) {
@@ -160,6 +196,50 @@ const App: React.FC = () => {
                      </button>
                    ))}
                 </div>
+             </div>
+             {/* NOTIFICAÇÕES: PARCELAS VENCIDAS */}
+             <div className="relative">
+                <button onClick={() => setShowNotifications(v => !v)} title="Parcelas vencidas" className="relative bg-[#FDFBF7] border-2 border-[#C5A059] p-3 rounded-xl shadow-md transition-all hover:bg-white">
+                  <Bell size={18} className="text-[#1A3240]" />
+                  {overdueExpenses.length > 0 && (
+                    <span className="absolute -top-2 -right-2 bg-red-600 text-white text-[10px] font-black min-w-[20px] h-5 px-1 rounded-full flex items-center justify-center shadow">
+                      {overdueExpenses.length}
+                    </span>
+                  )}
+                </button>
+                {showNotifications && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowNotifications(false)} />
+                    <div className="absolute top-full right-0 mt-2 bg-white shadow-2xl rounded-2xl border border-slate-100 w-96 max-w-[90vw] z-50">
+                      <div className="p-4 border-b border-slate-50 bg-slate-50 rounded-t-2xl flex items-center justify-between">
+                        <p className="text-[10px] font-black uppercase text-[#C5A059] tracking-widest">Parcelas Vencidas</p>
+                        {overdueExpenses.length > 0 && <span className="text-[10px] font-black text-red-600">{formatCurrency(overdueTotal)}</span>}
+                      </div>
+                      <div className="max-h-80 overflow-y-auto">
+                        {overdueExpenses.length === 0 ? (
+                          <p className="px-5 py-6 text-xs font-bold text-slate-400 text-center">Nenhuma parcela vencida. Tudo em dia!</p>
+                        ) : overdueExpenses.map(e => (
+                          <button key={e.id} onClick={() => { setActiveTab('table'); setShowNotifications(false); }} className="w-full text-left px-5 py-4 border-b border-slate-50 last:border-none hover:bg-red-50/50 transition-all flex gap-3">
+                            <AlertTriangle size={16} className="text-red-500 shrink-0 mt-0.5" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-black text-[#1A3240] truncate">{e.product || 'Sem descrição'}</p>
+                              <p className="text-[10px] text-slate-400 truncate">{e.provider || 'Sem fornecedor'} • venceu em {formatDate(e.due)}</p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="text-xs font-black text-[#1A3240]">{formatCurrency(e.negotiatedValue)}</p>
+                              <p className="text-[10px] font-black text-red-600">{e.days} dia(s)</p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                      {'Notification' in window && Notification.permission !== 'granted' && (
+                        <button onClick={enableBrowserNotifications} className="w-full p-3 text-[10px] font-black uppercase text-[#1A3240] bg-[#FDFBF7] hover:bg-[#C5A059] hover:text-white rounded-b-2xl transition-all">
+                          Ativar lembretes no navegador
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
              </div>
              <button onClick={handlePrint} className="bg-[#1A3240] text-white px-6 py-3.5 rounded-xl text-[11px] font-black uppercase shadow-lg border-b-4 border-[#C5A059] flex items-center gap-2 hover:bg-black transition-all active:translate-y-1 active:border-b-0">
                <Printer size={16} /> Relatório PDF
@@ -284,11 +364,17 @@ const App: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {expenses.map(exp => (
-                    <tr key={exp.id} className="hover:bg-slate-50/50 transition-all">
+                  {expenses.map(exp => {
+                    const isOverdue = exp.status === PaymentStatus.PENDING && (exp.dueDate || exp.date) < todayStr;
+                    return (
+                    <tr key={exp.id} className={`transition-all ${isOverdue ? 'bg-red-50/60 hover:bg-red-50' : 'hover:bg-slate-50/50'}`}>
                       <td className="px-6 py-5">
                          <input type="date" value={exp.date} onChange={(e) => updateExpense(exp.id, 'date', e.target.value)} className="bg-transparent border-none focus:ring-0 p-0 font-bold text-xs" />
                          <input type="text" placeholder="Documento" value={exp.nfNumber} onChange={(e) => updateExpense(exp.id, 'nfNumber', e.target.value)} className="text-[10px] text-slate-400 bg-transparent border-none focus:ring-0 p-0 block w-full uppercase mt-1" />
+                         <label className={`flex items-center gap-1 mt-1 text-[10px] font-black uppercase ${isOverdue ? 'text-red-600' : 'text-slate-400'}`}>
+                           Venc.
+                           <input type="date" value={exp.dueDate || ''} onChange={(e) => updateExpense(exp.id, 'dueDate', e.target.value)} className="bg-transparent border-none focus:ring-0 p-0 text-[10px] font-bold" />
+                         </label>
                       </td>
                       <td className="px-6 py-5">
                         <select value={exp.type} onChange={(e) => updateExpense(exp.id, 'type', e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black uppercase p-2 focus:ring-2 focus:ring-[#C5A059] outline-none">
@@ -316,7 +402,8 @@ const App: React.FC = () => {
                         <button onClick={() => setExpenses(expenses.filter(e => e.id !== exp.id))} className="text-slate-200 hover:text-red-500 transition-colors p-2"><Trash2 size={16}/></button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

@@ -30,6 +30,7 @@ export interface Expense {
   negotiatedValue: number; // Valor Fechado
   discount: number; // Calculado: original - negotiated
   status: PaymentStatus;
+  dueDate?: string; // Vencimento da parcela; se vazio, usa a data do lançamento
 }
 
 export interface Quote {
